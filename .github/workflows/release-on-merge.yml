@@ -1,0 +1,171 @@
+name: Create Release on PR Merge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml' # Trigger only on version changes since a workflow verifies version bumps
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Game Binaries
+    uses: ./.github/workflows/build-game-binary.yml
+    secrets: inherit
+
+  publish_image:
+    name: Build & Publish Docker Image (GHCR)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download Linux build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}-ubuntu-latest
+          path: dist/${{ needs.build.outputs.name }}-ubuntu-latest
+
+      - name: Get package name
+        id: get_name
+        run: |
+          NAME='${{ needs.build.outputs.name }}'
+          echo "name=$NAME" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version =' Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "version=$VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Locate binary
+        id: locate
+        run: |
+          NAME="${{ steps.get_name.outputs.name }}"
+          # Try exact name then capitalized
+          FIRST="${NAME:0:1}"
+          REST="${NAME:1}"
+          FIRST_UP=$(tr '[:lower:]' '[:upper:]' <<< "$FIRST")
+          CAPITALIZED="$FIRST_UP$REST"
+
+          if [[ -f "dist/${NAME}-ubuntu-latest/${NAME}" ]]; then
+            echo "binary=dist/${NAME}-ubuntu-latest/${NAME}" | tee -a "$GITHUB_OUTPUT"
+          elif [[ -f "dist/${NAME}-ubuntu-latest/${CAPITALIZED}" ]]; then
+            echo "binary=dist/${NAME}-ubuntu-latest/${CAPITALIZED}" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "No linux binary found in dist/${NAME}-ubuntu-latest" >&2
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ steps.get_name.outputs.name }}:v${{ steps.get_version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/${{ steps.get_name.outputs.name }}:latest
+          build-args: |
+            BINARY=${{ steps.locate.outputs.binary }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  create_release:
+    name: Create Release and Upload Assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download build artifacts (Linux)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}-ubuntu-latest
+          path: dist/${{ needs.build.outputs.name }}-ubuntu-latest
+
+      - name: Download build artifacts (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}-windows-latest
+          path: dist/${{ needs.build.outputs.name }}-windows-latest
+
+      - name: Download build artifacts (macOS)
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}-macos-latest
+          path: dist/${{ needs.build.outputs.name }}-macos-latest
+
+      - name: Rename and flatten binaries
+        run: |
+          NAME='${{ needs.build.outputs.name }}'
+          # Capitalize first character
+          FIRST="${NAME:0:1}"
+          REST="${NAME:1}"
+          FIRST_UP="$(tr '[:lower:]' '[:upper:]' <<< "$FIRST")"
+          CAPITALIZED="$FIRST_UP$REST"
+
+          # Linux
+          if [[ -f "dist/${{ needs.build.outputs.name }}-ubuntu-latest/${NAME}" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-ubuntu-latest/${NAME}" "dist/${NAME}-linux"
+          elif [[ -f "dist/${{ needs.build.outputs.name }}-ubuntu-latest/${CAPITALIZED}" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-ubuntu-latest/${CAPITALIZED}" "dist/${NAME}-linux"
+          fi
+
+          # macOS
+          if [[ -f "dist/${{ needs.build.outputs.name }}-macos-latest/${NAME}" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-macos-latest/${NAME}" "dist/${NAME}-macos"
+          elif [[ -f "dist/${{ needs.build.outputs.name }}-macos-latest/${CAPITALIZED}" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-macos-latest/${CAPITALIZED}" "dist/${NAME}-macos"
+          fi
+
+          # Windows
+          if [[ -f "dist/${{ needs.build.outputs.name }}-windows-latest/${NAME}.exe" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-windows-latest/${NAME}.exe" "dist/${NAME}-windows.exe"
+          elif [[ -f "dist/${{ needs.build.outputs.name }}-windows-latest/${CAPITALIZED}.exe" ]]; then
+            cp "dist/${{ needs.build.outputs.name }}-windows-latest/${CAPITALIZED}.exe" "dist/${NAME}-windows.exe"
+          fi
+
+      - name: Retrieve version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version =' Cargo.toml | head -n 1 | cut -d '"' -f 2)
+          echo "version=$VERSION" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release and upload assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: 'Version ${{ steps.get_version.outputs.version }}'
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            dist/${{ needs.build.outputs.name }}-linux
+            dist/${{ needs.build.outputs.name }}-macos
+            dist/${{ needs.build.outputs.name }}-windows.exe
