@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     name: Build Game Binaries
-    uses: ./.github/workflows/build-game-binary.yml
+    uses: ./.github/workflows/build-binary.yml
     secrets: inherit
 
   publish_image:
