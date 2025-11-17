@@ -17,7 +17,7 @@ RUN addgroup --system app \
 # Simple HEALTHCHECK so scanners (e.g. Checkov) detect a healthprobe.
 # This uses the shell builtin `test` to ensure the binary is executable.
 HEALTHCHECK --interval=30s --timeout=3s \
-	CMD-SHELL "test -x /usr/local/bin/classmate || exit 1"
+	CMD /bin/sh -c "test -x /usr/local/bin/classmate || exit 1"
 
 # Run as non-root user
 USER app
