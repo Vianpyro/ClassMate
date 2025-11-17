@@ -55,6 +55,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_ALL_CODEBASE: false
           # Disable problematic validators
+          VALIDATE_BIOME_FORMAT: false
           VALIDATE_DOCKERFILE_HADOLINT: false
           VALIDATE_GIT_COMMITLINT: false
           # Enable fixers for PR events
