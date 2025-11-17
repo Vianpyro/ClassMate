@@ -6,4 +6,7 @@ RUN apk add --no-cache \
     linux-headers \
     pkgconf
 
+RUN addgroup -S vscode && adduser -S -G vscode vscode
+USER vscode
+
 CMD ["/bin/sh", "-lc", "rustc --version && cargo --version"]
