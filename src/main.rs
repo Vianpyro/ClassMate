@@ -1,45 +1,30 @@
-use std::env;
+mod commands;
 
-use serenity::async_trait;
-use serenity::model::channel::Message;
-use serenity::model::gateway::Ready;
+use std::env;
+use serenity::{all::Interaction, async_trait, model::{application::Command, gateway::Ready}};
 use serenity::prelude::*;
-use serenity::utils::MessageBuilder;
 
 struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, context: Context, msg: Message) {
-        if msg.content == "!ping" {
-            let channel = match msg.channel_id.to_channel(&context).await {
-                Ok(channel) => channel,
-                Err(why) => {
-                    println!("Error getting channel: {why:?}");
+    async fn ready(&self, ctx: Context, ready: Ready) {
+        println!("{} is online!", ready.user.name);
 
-                    return;
-                },
-            };
+        let global_command = Command::create_global_command(&ctx.http, commands::ping::register()).await;
 
-            // The message builder allows for creating a message by mentioning users dynamically,
-            // pushing "safe" versions of content (such as bolding normalized content), displaying
-            // emojis, and more.
-            let response = MessageBuilder::new()
-                .push("User ")
-                .push_bold_safe(&msg.author.name)
-                .push(" used the 'ping' command in the ")
-                .mention(&channel)
-                .push(" channel")
-                .build();
-
-            if let Err(why) = msg.channel_id.say(&context.http, &response).await {
-                println!("Error sending message: {why:?}");
-            }
-        }
+        println!("I created the following global slash command: {global_command:#?}");
     }
 
-    async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        if let Interaction::Command(command) = interaction {
+            match command.data.name.as_str() {
+                "ping" => {
+                    commands::ping::execute(&ctx, &command).await;
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -50,13 +35,13 @@ async fn main() {
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
     // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES;
 
     // Create a new instance of the Client, logging in as a bot.
-    let mut client = Client::builder(&token, intents).event_handler(Handler).await.expect("Err creating client");
+    let mut client = Client::builder(&token, intents).event_handler(Handler).await.expect("Failed to create client");
 
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {
-        println!("Client error: {why:?}");
+        println!("Failed to initialize client: {why:?}");
     }
 }
